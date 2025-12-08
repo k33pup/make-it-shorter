@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package analytics;
+
+option go_package = "github.com/gorgio/network/api/proto";
+
+service AnalyticsService {
+  rpc RecordClick(RecordClickRequest) returns (RecordClickResponse);
+  rpc GetClickStats(GetClickStatsRequest) returns (GetClickStatsResponse);
+}
+
+message RecordClickRequest {
+  string short_code = 1;
+  string ip_address = 2;
+  string user_agent = 3;
+  string referer = 4;
+}
+
+message RecordClickResponse {
+  bool success = 1;
+}
+
+message GetClickStatsRequest {
+  string short_code = 1;
+}
+
+message ClickStats {
+  int64 total_clicks = 1;
+  int64 unique_clicks = 2;
+  repeated DailyClick daily_clicks = 3;
+}
+
+message DailyClick {
+  string date = 1;
+  int64 count = 2;
+}
+
+message GetClickStatsResponse {
+  ClickStats stats = 1;
+}

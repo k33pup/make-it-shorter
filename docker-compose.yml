@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: url_shortener_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - urlshortener
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  urlservice:
+    build:
+      context: .
+      dockerfile: services/urlservice/Dockerfile
+    container_name: url_shortener_urlservice
+    ports:
+      - "8081:8081"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - urlshortener
+    environment:
+      - REDIS_ADDR=redis:6379
+    restart: unless-stopped
+
+  analytics:
+    build:
+      context: .
+      dockerfile: services/analytics/Dockerfile
+    container_name: url_shortener_analytics
+    ports:
+      - "8082:8082"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - urlshortener
+    environment:
+      - REDIS_ADDR=redis:6379
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    container_name: url_shortener_gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      - urlservice
+      - analytics
+      - redis
+    networks:
+      - urlshortener
+    environment:
+      - REDIS_ADDR=redis:6379
+      - URL_SERVICE_ADDR=urlservice:8081
+      - ANALYTICS_SERVICE_ADDR=analytics:8082
+    restart: unless-stopped
+
+networks:
+  urlshortener:
+    driver: bridge
