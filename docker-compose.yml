@@ -66,13 +66,10 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      # Важно: монтируем templates, Nginx сам сгенерирует conf.d
-      - ./nginx/templates:/etc/nginx/templates
+      - ./nginx/conf/default.conf:/etc/nginx/conf.d/default.conf
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
       - ./web/static:/var/www/static
-    environment:
-      - DOMAIN_NAME=${DOMAIN_NAME} # Передаем домен внутрь для подстановки
     depends_on:
       - gateway
     networks:
