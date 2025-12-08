@@ -25,6 +25,7 @@ services:
       - urlshortener
     environment:
       - REDIS_ADDR=redis:6379
+      - DOMAIN_NAME=${DOMAIN_NAME}
     restart: unless-stopped
 
   analytics:

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ type URLServiceServer struct {
 	redis   *redis.Client
 	storage map[string]*URLData
 	mu      sync.RWMutex
+	baseURL string
 }
 
 type URLData struct {
@@ -31,9 +33,16 @@ type URLData struct {
 }
 
 func NewURLServiceServer(redisClient *redis.Client) *URLServiceServer {
+	domain := os.Getenv("DOMAIN_NAME")
+	baseURL := "http://localhost:8080"
+	if domain != "" {
+		baseURL = "https://" + domain
+	}
+
 	return &URLServiceServer{
 		redis:   redisClient,
 		storage: make(map[string]*URLData),
+		baseURL: baseURL,
 	}
 }
 
@@ -90,7 +99,7 @@ func (s *URLServiceServer) CreateShortURL(ctx context.Context, req *pb.CreateSho
 
 	return &pb.CreateShortURLResponse{
 		ShortCode:   shortCode,
-		ShortUrl:    fmt.Sprintf("http://localhost:8080/s/%s", shortCode),
+		ShortUrl:    fmt.Sprintf("%s/s/%s", s.baseURL, shortCode),
 		OriginalUrl: req.OriginalUrl,
 		CreatedAt:   createdAt,
 	}, nil
@@ -144,7 +153,7 @@ func (s *URLServiceServer) GetUserURLs(ctx context.Context, req *pb.GetUserURLsR
 		if urlData.UserID == req.UserId {
 			urls = append(urls, &pb.URLInfo{
 				ShortCode:   urlData.ShortCode,
-				ShortUrl:    fmt.Sprintf("http://localhost:8080/s/%s", urlData.ShortCode),
+				ShortUrl:    fmt.Sprintf("%s/s/%s", s.baseURL, urlData.ShortCode),
 				OriginalUrl: urlData.OriginalURL,
 				CreatedAt:   urlData.CreatedAt,
 				Clicks:      0, // Will be populated from analytics
