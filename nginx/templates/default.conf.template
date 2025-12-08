@@ -3,25 +3,13 @@ server {
     server_name ${DOMAIN_NAME};
     server_tokens off;
 
+    # Для получения сертификатов (оставляем, пригодится)
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
     }
 
-    location / {
-        return 301 https://$host$request_uri;
-    }
-}
-
-server {
-    listen 443 ssl;
-    server_name ${DOMAIN_NAME};
-    server_tokens off;
-
-    ssl_certificate /etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN_NAME}/privkey.pem;
-    include /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-
+    # Временно: раздаем сайт по HTTP (так как нет сертификатов)
+    
     # Serve static files directly
     location / {
         root /var/www/static;
@@ -46,3 +34,28 @@ server {
         proxy_set_header    X-Forwarded-Proto   $scheme;
     }
 }
+
+# SSL пока отключаем, так как нет файлов сертификатов.
+# Когда получите сертификат через скрипт init-letsencrypt.sh, 
+# раскомментируйте этот блок!
+
+# server {
+#     listen 443 ssl;
+#     server_name ${DOMAIN_NAME};
+#     server_tokens off;
+#
+#     ssl_certificate /etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem;
+#     ssl_certificate_key /etc/letsencrypt/live/${DOMAIN_NAME}/privkey.pem;
+#     include /etc/letsencrypt/options-ssl-nginx.conf;
+#     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+#
+#     location / {
+#         root /var/www/static;
+#         try_files $uri $uri/ /index.html;
+#     }
+#
+#     location /api/ {
+#         proxy_pass http://gateway:8080;
+#         ...
+#     }
+# }
