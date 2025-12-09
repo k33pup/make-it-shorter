@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	pb "github.com/gorgio/network/api/proto"
 	"github.com/gorgio/network/pkg/auth"
+	"github.com/gorgio/network/pkg/database"
 	"github.com/gorgio/network/pkg/middleware"
 	"github.com/gorgio/network/pkg/validator"
 	"github.com/redis/go-redis/v9"
@@ -22,13 +24,15 @@ type Gateway struct {
 	urlClient       pb.URLServiceClient
 	analyticsClient pb.AnalyticsServiceClient
 	rateLimiter     *middleware.RateLimiter
+	userDB          *database.UserDB
 }
 
-func NewGateway(urlConn, analyticsConn *grpc.ClientConn, rateLimiter *middleware.RateLimiter) *Gateway {
+func NewGateway(urlConn, analyticsConn *grpc.ClientConn, rateLimiter *middleware.RateLimiter, userDB *database.UserDB) *Gateway {
 	return &Gateway{
 		urlClient:       pb.NewURLServiceClient(urlConn),
 		analyticsClient: pb.NewAnalyticsServiceClient(analyticsConn),
 		rateLimiter:     rateLimiter,
+		userDB:          userDB,
 	}
 }
 
@@ -38,7 +42,9 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -46,9 +52,16 @@ func securityHeaders(next http.Handler) http.Handler {
 // CORS middleware
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		// Get allowed origins from environment or use localhost for development
+		allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
+		if allowedOrigin == "" {
+			allowedOrigin = "http://localhost:8080"
+		}
+
+		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -67,6 +80,7 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Username string `json:"username"`
+		Password string `json:"password"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -76,8 +90,23 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Sanitize input
 	username := validator.SanitizeInput(req.Username)
-	if username == "" {
-		http.Error(w, "Username is required", http.StatusBadRequest)
+	password := validator.SanitizeInput(req.Password)
+
+	if username == "" || password == "" {
+		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate credentials using database
+	valid, err := g.userDB.ValidateUser(username, password)
+	if err != nil {
+		log.Printf("Error validating user: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if !valid {
+		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 		return
 	}
 
@@ -92,6 +121,80 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"token":   token,
 		"user_id": username,
+	})
+}
+
+func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Sanitize input
+	username := validator.SanitizeInput(req.Username)
+	password := validator.SanitizeInput(req.Password)
+
+	// Validate inputs
+	if username == "" || password == "" {
+		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	// Check username length
+	if len(username) < 3 || len(username) > 50 {
+		http.Error(w, "Username must be between 3 and 50 characters", http.StatusBadRequest)
+		return
+	}
+
+	// Check password length
+	if len(password) < 6 {
+		http.Error(w, "Password must be at least 6 characters", http.StatusBadRequest)
+		return
+	}
+
+	// Check if user already exists
+	exists, err := g.userDB.UserExists(username)
+	if err != nil {
+		log.Printf("Error checking user existence: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if exists {
+		http.Error(w, "Username already taken", http.StatusConflict)
+		return
+	}
+
+	// Create user (email is empty string)
+	err = g.userDB.CreateUser(username, password, "")
+	if err != nil {
+		log.Printf("Error creating user: %v", err)
+		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		return
+	}
+
+	// Generate JWT token for auto-login
+	token, err := auth.GenerateToken(username)
+	if err != nil {
+		http.Error(w, "User created but failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"token":   token,
+		"user_id": username,
+		"message": "User created successfully",
 	})
 }
 
@@ -267,13 +370,25 @@ func (g *Gateway) handleGetStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header first (format: client, proxy1, proxy2)
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
+		// Take only the first IP (the actual client)
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
 	}
+	// Check X-Real-IP header
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
 		return xri
 	}
-	return r.RemoteAddr
+	// r.RemoteAddr contains IP:Port, we need only IP
+	ip := r.RemoteAddr
+	// Split by last colon to handle IPv6
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	return ip
 }
 
 func main() {
@@ -291,6 +406,19 @@ func main() {
 	}
 	defer analyticsConn.Close()
 
+	// Connect to PostgreSQL
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		log.Fatal("DATABASE_URL environment variable is not set")
+	}
+
+	userDB, err := database.NewUserDB(databaseURL)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer userDB.Close()
+	log.Println("Connected to PostgreSQL")
+
 	// Connect to Redis
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: "redis:6379",
@@ -303,15 +431,16 @@ func main() {
 		log.Println("Connected to Redis")
 	}
 
-	// Create rate limiter (10 requests per minute)
+	// Create rate limiter (100 requests per minute)
 	rateLimiter := middleware.NewRateLimiter(redisClient, 100, time.Minute)
 
-	gateway := NewGateway(urlConn, analyticsConn, rateLimiter)
+	gateway := NewGateway(urlConn, analyticsConn, rateLimiter, userDB)
 
 	// Setup routes
 	mux := http.NewServeMux()
 
 	// API routes
+	mux.HandleFunc("/api/register", gateway.handleRegister)
 	mux.HandleFunc("/api/login", gateway.handleLogin)
 	mux.HandleFunc("/api/shorten", gateway.handleCreateShortURL)
 	mux.HandleFunc("/api/urls", gateway.handleGetUserURLs)

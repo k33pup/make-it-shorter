@@ -42,21 +42,46 @@ services:
       - REDIS_ADDR=redis:6379
     restart: unless-stopped
 
+  postgres:
+    image: postgres:15-alpine
+    container_name: url_shortener_postgres
+    networks:
+      - urlshortener
+    environment:
+      - POSTGRES_DB=urlshortener
+      - POSTGRES_USER=urluser
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U urluser -d urlshortener"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   gateway:
     build:
       context: .
       dockerfile: services/gateway/Dockerfile
     container_name: url_shortener_gateway
+    ports:
+      - "8080:8080"
     depends_on:
       - urlservice
       - analytics
       - redis
+      - postgres
     networks:
       - urlshortener
     environment:
       - REDIS_ADDR=redis:6379
       - URL_SERVICE_ADDR=urlservice:8081
       - ANALYTICS_SERVICE_ADDR=analytics:8082
+      - JWT_SECRET=${JWT_SECRET}
+      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://localhost:8080}
+      - DATABASE_URL=postgresql://urluser:${POSTGRES_PASSWORD:-changeme123}@postgres:5432/urlshortener?sslmode=disable
     restart: unless-stopped
 
   nginx:
@@ -83,3 +108,6 @@ services:
 networks:
   urlshortener:
     driver: bridge
+
+volumes:
+  postgres_data:

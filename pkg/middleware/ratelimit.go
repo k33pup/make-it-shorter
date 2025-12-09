@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -55,9 +56,13 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 }
 
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first
+	// Check X-Forwarded-For header first (format: client, proxy1, proxy2)
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
+		// Take only the first IP (the actual client)
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
 	}
 	// Check X-Real-IP header
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {

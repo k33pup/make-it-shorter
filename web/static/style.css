@@ -56,7 +56,9 @@ header h1 {
     margin-bottom: 15px;
 }
 
-input[type="text"] {
+input[type="text"],
+input[type="password"],
+input[type="email"] {
     width: 100%;
     padding: 12px 15px;
     border: 2px solid #e0e0e0;
@@ -65,7 +67,9 @@ input[type="text"] {
     transition: border-color 0.3s;
 }
 
-input[type="text"]:focus {
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus {
     outline: none;
     border-color: #667eea;
 }
@@ -245,6 +249,36 @@ footer {
     border-radius: 8px;
     border-left: 4px solid #ffc107;
     color: #856404;
+}
+
+.auth-switch {
+    text-align: center;
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid #e0e0e0;
+    color: #666;
+    font-size: 14px;
+}
+
+.auth-switch a {
+    color: #667eea;
+    text-decoration: none;
+    font-weight: 600;
+    transition: color 0.2s;
+}
+
+.auth-switch a:hover {
+    color: #764ba2;
+    text-decoration: underline;
+}
+
+.hidden {
+    display: none;
+}
+
+.no-urls-message {
+    text-align: center;
+    color: #999;
 }
 
 @media (max-width: 600px) {

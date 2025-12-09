@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: url_shortener_postgres
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=urlshortener
+      - POSTGRES_PASSWORD=urlshortener123
+      - POSTGRES_DB=urlshortener
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - urlshortener
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U urlshortener"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: url_shortener_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - urlshortener
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  urlservice:
+    build:
+      context: .
+      dockerfile: services/urlservice/Dockerfile
+    container_name: url_shortener_urlservice
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - urlshortener
+    environment:
+      - REDIS_ADDR=redis:6379
+      - DOMAIN_NAME=${DOMAIN_NAME:-localhost}
+
+  analytics:
+    build:
+      context: .
+      dockerfile: services/analytics/Dockerfile
+    container_name: url_shortener_analytics
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - urlshortener
+    environment:
+      - REDIS_ADDR=redis:6379
+
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    container_name: url_shortener_gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      urlservice:
+        condition: service_started
+      analytics:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - urlshortener
+    environment:
+      - REDIS_ADDR=redis:6379
+      - URL_SERVICE_ADDR=urlservice:8081
+      - ANALYTICS_SERVICE_ADDR=analytics:8082
+      - DATABASE_URL=postgres://urlshortener:urlshortener123@postgres:5432/urlshortener?sslmode=disable
+      - JWT_SECRET=${JWT_SECRET}
+      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://localhost:8080}
+      - DOMAIN_NAME=${DOMAIN_NAME:-localhost}
+
+networks:
+  urlshortener:
+    driver: bridge
+
+volumes:
+  postgres_data:

@@ -35,7 +35,9 @@ type URLData struct {
 func NewURLServiceServer(redisClient *redis.Client) *URLServiceServer {
 	domain := os.Getenv("DOMAIN_NAME")
 	baseURL := "http://localhost:8080"
-	if domain != "" {
+
+	if domain != "" && domain != "localhost" {
+		// For production domains, use https
 		baseURL = "https://" + domain
 	}
 
