@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -41,11 +42,42 @@ func NewURLServiceServer(redisClient *redis.Client) *URLServiceServer {
 		baseURL = "https://" + domain
 	}
 
-	return &URLServiceServer{
+	server := &URLServiceServer{
 		redis:   redisClient,
 		storage: make(map[string]*URLData),
 		baseURL: baseURL,
 	}
+
+	// Restore data from Redis
+	ctx := context.Background()
+	iter := redisClient.Scan(ctx, 0, "urldata:*", 0).Iterator()
+	count := 0
+	
+	for iter.Next(ctx) {
+		key := iter.Val()
+		val, err := redisClient.Get(ctx, key).Result()
+		if err != nil {
+			log.Printf("Failed to load key %s: %v", key, err)
+			continue
+		}
+
+		var urlData URLData
+		if err := json.Unmarshal([]byte(val), &urlData); err != nil {
+			log.Printf("Failed to unmarshal key %s: %v", key, err)
+			continue
+		}
+
+		server.storage[urlData.ShortCode] = &urlData
+		count++
+	}
+
+	if err := iter.Err(); err != nil {
+		log.Printf("Error during Redis scan: %v", err)
+	}
+
+	log.Printf("Restored %d URLs from Redis storage", count)
+
+	return server
 }
 
 func (s *URLServiceServer) CreateShortURL(ctx context.Context, req *pb.CreateShortURLRequest) (*pb.CreateShortURLResponse, error) {
@@ -90,9 +122,21 @@ func (s *URLServiceServer) CreateShortURL(ctx context.Context, req *pb.CreateSho
 	s.storage[shortCode] = urlData
 	s.mu.Unlock()
 
-	// Cache in Redis
+	// 1. Persist full data in Redis (Permanent storage)
+	jsonData, err := json.Marshal(urlData)
+	if err != nil {
+		log.Printf("Failed to marshal URL data: %v", err)
+	} else {
+		persistKey := fmt.Sprintf("urldata:%s", shortCode)
+		err := s.redis.Set(ctx, persistKey, jsonData, 0).Err() // 0 = no expiration
+		if err != nil {
+			log.Printf("Failed to persist in Redis: %v", err)
+		}
+	}
+
+	// 2. Cache simple mapping in Redis (Fast lookups, 24h TTL)
 	cacheKey := fmt.Sprintf("url:%s", shortCode)
-	err := s.redis.Set(ctx, cacheKey, req.OriginalUrl, 24*time.Hour).Err()
+	err = s.redis.Set(ctx, cacheKey, req.OriginalUrl, 24*time.Hour).Err()
 	if err != nil {
 		log.Printf("Failed to cache in Redis: %v", err)
 	}
