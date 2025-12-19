@@ -48,7 +48,6 @@ func NewURLServiceServer(redisClient *redis.Client) *URLServiceServer {
 		baseURL: baseURL,
 	}
 
-	// Restore data from Redis
 	ctx := context.Background()
 	iter := redisClient.Scan(ctx, 0, "urldata:*", 0).Iterator()
 	count := 0
@@ -190,7 +189,6 @@ func (s *URLServiceServer) GetOriginalURL(ctx context.Context, req *pb.GetOrigin
 func (s *URLServiceServer) GetUserURLs(ctx context.Context, req *pb.GetUserURLsRequest) (*pb.GetUserURLsResponse, error) {
 	log.Printf("GetUserURLs request: user_id=%s", req.UserId)
 
-	// Initialize as empty slice to avoid null in JSON
 	urls := make([]*pb.URLInfo, 0)
 
 	s.mu.RLock()
@@ -201,7 +199,7 @@ func (s *URLServiceServer) GetUserURLs(ctx context.Context, req *pb.GetUserURLsR
 				ShortUrl:    fmt.Sprintf("%s/s/%s", s.baseURL, urlData.ShortCode),
 				OriginalUrl: urlData.OriginalURL,
 				CreatedAt:   urlData.CreatedAt,
-				Clicks:      0, // Will be populated from analytics
+				Clicks:      0,
 			})
 		}
 	}
@@ -218,13 +216,11 @@ func generateShortCode() string {
 	b := make([]byte, 6)
 	rand.Read(b)
 	code := base64.URLEncoding.EncodeToString(b)
-	// Take first 6 characters and replace special chars
 	code = code[:6]
 	return code
 }
 
 func main() {
-	// Connect to Redis
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: "redis:6379",
 	})
@@ -236,7 +232,6 @@ func main() {
 		log.Println("Connected to Redis")
 	}
 
-	// Create gRPC server
 	lis, err := net.Listen("tcp", ":8081")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)

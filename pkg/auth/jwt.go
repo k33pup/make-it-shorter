@@ -13,7 +13,6 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// getJWTSecret retrieves the JWT secret from environment variable
 func getJWTSecret() []byte {
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {

@@ -36,7 +36,6 @@ func NewGateway(urlConn, analyticsConn *grpc.ClientConn, rateLimiter *middleware
 	}
 }
 
-// Middleware to add security headers
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -58,10 +57,8 @@ func requestSizeLimit(maxBytes int64) func(http.Handler) http.Handler {
 	}
 }
 
-// CORS middleware
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Get allowed origins from environment or use localhost for development
 		allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
 		if allowedOrigin == "" {
 			allowedOrigin = "http://localhost:8080"
@@ -97,7 +94,6 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize input
 	username := validator.SanitizeInput(req.Username)
 	password := validator.SanitizeInput(req.Password)
 
@@ -106,7 +102,6 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate credentials using database
 	valid, err := g.userDB.ValidateUser(username, password)
 	if err != nil {
 		log.Printf("Error validating user: %v", err)
@@ -119,7 +114,6 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate JWT token
 	token, err := auth.GenerateToken(username)
 	if err != nil {
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
@@ -242,11 +236,10 @@ func (g *Gateway) handleCreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize input
 	req.URL = validator.SanitizeInput(req.URL)
 	req.CustomAlias = validator.SanitizeInput(req.CustomAlias)
 
-	// Call URL service via gRPC
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -296,7 +289,6 @@ func (g *Gateway) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Record click in analytics service (async)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -312,7 +304,6 @@ func (g *Gateway) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Redirect to original URL
 	http.Redirect(w, r, urlResp.OriginalUrl, http.StatusMovedPermanently)
 }
 
@@ -349,7 +340,6 @@ func (g *Gateway) handleGetUserURLs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure empty array instead of null
 	if resp.Urls == nil {
 		resp.Urls = []*pb.URLInfo{}
 	}
@@ -393,21 +383,16 @@ func (g *Gateway) handleGetStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header first (format: client, proxy1, proxy2)
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take only the first IP (the actual client)
 		if idx := strings.Index(xff, ","); idx != -1 {
 			return strings.TrimSpace(xff[:idx])
 		}
 		return strings.TrimSpace(xff)
 	}
-	// Check X-Real-IP header
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
 		return xri
 	}
-	// r.RemoteAddr contains IP:Port, we need only IP
 	ip := r.RemoteAddr
-	// Split by last colon to handle IPv6
 	if idx := strings.LastIndex(ip, ":"); idx != -1 {
 		ip = ip[:idx]
 	}
@@ -415,21 +400,18 @@ func getClientIP(r *http.Request) string {
 }
 
 func main() {
-	// Connect to URL service
 	urlConn, err := grpc.Dial("urlservice:8081", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to URL service: %v", err)
 	}
 	defer urlConn.Close()
 
-	// Connect to Analytics service
 	analyticsConn, err := grpc.Dial("analytics:8082", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to Analytics service: %v", err)
 	}
 	defer analyticsConn.Close()
 
-	// Connect to PostgreSQL
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		log.Fatal("DATABASE_URL environment variable is not set")
@@ -442,7 +424,6 @@ func main() {
 	defer userDB.Close()
 	log.Println("Connected to PostgreSQL")
 
-	// Connect to Redis
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: "redis:6379",
 	})
@@ -454,25 +435,20 @@ func main() {
 		log.Println("Connected to Redis")
 	}
 
-	// Create rate limiter (100 requests per minute)
 	rateLimiter := middleware.NewRateLimiter(redisClient, 100, time.Minute)
 
 	gateway := NewGateway(urlConn, analyticsConn, rateLimiter, userDB)
 
-	// Setup routes
 	mux := http.NewServeMux()
 
-	// API routes
 	mux.HandleFunc("/api/register", gateway.handleRegister)
 	mux.HandleFunc("/api/login", gateway.handleLogin)
 	mux.HandleFunc("/api/shorten", gateway.handleCreateShortURL)
 	mux.HandleFunc("/api/urls", gateway.handleGetUserURLs)
 	mux.HandleFunc("/api/stats", gateway.handleGetStats)
 
-	// Redirect route
 	mux.HandleFunc("/s/", gateway.handleRedirect)
 
-	// Serve static files
 	fs := http.FileServer(http.Dir("/app/web/static"))
 	mux.Handle("/", fs)
 

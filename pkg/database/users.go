@@ -40,15 +40,12 @@ func (udb *UserDB) Close() error {
 	return udb.db.Close()
 }
 
-// CreateUser creates a new user with hashed password
 func (udb *UserDB) CreateUser(username, password, email string) error {
-	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
 
-	// Insert user
 	query := `INSERT INTO users (username, password_hash, email) VALUES ($1, $2, $3)`
 	_, err = udb.db.Exec(query, username, string(hashedPassword), email)
 	if err != nil {
@@ -58,7 +55,6 @@ func (udb *UserDB) CreateUser(username, password, email string) error {
 	return nil
 }
 
-// ValidateUser checks if username and password are correct
 func (udb *UserDB) ValidateUser(username, password string) (bool, error) {
 	var passwordHash string
 	query := `SELECT password_hash FROM users WHERE username = $1`
@@ -71,7 +67,6 @@ func (udb *UserDB) ValidateUser(username, password string) (bool, error) {
 		return false, err
 	}
 
-	// Compare password with hash
 	err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
 	if err != nil {
 		return false, nil
@@ -80,7 +75,6 @@ func (udb *UserDB) ValidateUser(username, password string) (bool, error) {
 	return true, nil
 }
 
-// UserExists checks if a username already exists
 func (udb *UserDB) UserExists(username string) (bool, error) {
 	var exists bool
 	query := `SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)`
@@ -93,7 +87,6 @@ func (udb *UserDB) UserExists(username string) (bool, error) {
 	return exists, nil
 }
 
-// GetUser retrieves user information by username
 func (udb *UserDB) GetUser(username string) (*User, error) {
 	user := &User{}
 	query := `SELECT id, username, password_hash, email, created_at, updated_at FROM users WHERE username = $1`

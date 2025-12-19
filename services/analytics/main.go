@@ -85,7 +85,6 @@ func (s *AnalyticsServiceServer) GetClickStats(ctx context.Context, req *pb.GetC
 	totalKey := fmt.Sprintf("clicks:total:%s", req.ShortCode)
 	uniqueKey := fmt.Sprintf("clicks:unique:%s", req.ShortCode)
 
-	// Get total clicks
 	totalClicks, err := s.redis.Get(ctx, totalKey).Int64()
 	if err != nil {
 		if err.Error() != "redis: nil" {
@@ -102,7 +101,6 @@ func (s *AnalyticsServiceServer) GetClickStats(ctx context.Context, req *pb.GetC
 		uniqueClicks = 0
 	}
 
-	// Get daily clicks for last 7 days
 	var dailyClicks []*pb.DailyClick
 	for i := 0; i < 7; i++ {
 		date := time.Now().AddDate(0, 0, -i).Format("2006-01-02")
@@ -131,7 +129,6 @@ func (s *AnalyticsServiceServer) GetClickStats(ctx context.Context, req *pb.GetC
 }
 
 func main() {
-	// Connect to Redis
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: "redis:6379",
 	})
@@ -143,7 +140,6 @@ func main() {
 		log.Println("Connected to Redis")
 	}
 
-	// Create gRPC server
 	lis, err := net.Listen("tcp", ":8082")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
