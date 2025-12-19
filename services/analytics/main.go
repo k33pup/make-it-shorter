@@ -42,13 +42,14 @@ func (s *AnalyticsServiceServer) RecordClick(ctx context.Context, req *pb.Record
 	ipAddress := req.IpAddress[:min(len(req.IpAddress), 45)]
 	userAgent := req.UserAgent[:min(len(req.UserAgent), 500)]
 	referer := req.Referer[:min(len(req.Referer), 500)]
+	now := time.Now()
 
 	clickData := &ClickData{
 		ShortCode: shortCode,
 		IPAddress: ipAddress,
 		UserAgent: userAgent,
 		Referer:   referer,
-		Timestamp: time.Now().Unix(),
+		Timestamp: now.Unix(),
 	}
 
 	s.mu.Lock()
@@ -57,15 +58,34 @@ func (s *AnalyticsServiceServer) RecordClick(ctx context.Context, req *pb.Record
 
 	totalKey := fmt.Sprintf("clicks:total:%s", shortCode)
 	uniqueKey := fmt.Sprintf("clicks:unique:%s", shortCode)
-	dateKey := fmt.Sprintf("clicks:daily:%s:%s", shortCode, time.Now().Format("2006-01-02"))
+	dateKey := fmt.Sprintf("clicks:daily:%s:%s", shortCode, now.Format("2006-01-02"))
+	hourKey := fmt.Sprintf("clicks:hourly:%s:%s", shortCode, now.Format("2006-01-02-15"))
+	refererKey := fmt.Sprintf("clicks:referers:%s", shortCode)
+	globalKey := "clicks:global:sorted"
+	globalWeekKey := fmt.Sprintf("clicks:global:week:%s", now.Format("2006-W01"))
+	globalMonthKey := fmt.Sprintf("clicks:global:month:%s", now.Format("2006-01"))
 
 	pipe := s.redis.Pipeline()
 	pipe.Incr(ctx, totalKey)
 	pipe.SAdd(ctx, uniqueKey, req.IpAddress)
 	pipe.Incr(ctx, dateKey)
+	pipe.Incr(ctx, hourKey)
+
+	if referer != "" {
+		pipe.ZIncrBy(ctx, refererKey, 1, referer)
+		pipe.Expire(ctx, refererKey, 30*24*time.Hour)
+	}
+
+	pipe.ZIncrBy(ctx, globalKey, 1, shortCode)
+	pipe.ZIncrBy(ctx, globalWeekKey, 1, shortCode)
+	pipe.ZIncrBy(ctx, globalMonthKey, 1, shortCode)
+
 	pipe.Expire(ctx, totalKey, 30*24*time.Hour)
 	pipe.Expire(ctx, uniqueKey, 30*24*time.Hour)
 	pipe.Expire(ctx, dateKey, 30*24*time.Hour)
+	pipe.Expire(ctx, hourKey, 30*24*time.Hour)
+	pipe.Expire(ctx, globalWeekKey, 90*24*time.Hour)
+	pipe.Expire(ctx, globalMonthKey, 180*24*time.Hour)
 
 	_, err := pipe.Exec(ctx)
 	if err != nil {
@@ -126,6 +146,102 @@ func (s *AnalyticsServiceServer) GetClickStats(ctx context.Context, req *pb.GetC
 	return &pb.GetClickStatsResponse{
 		Stats: stats,
 	}, nil
+}
+
+func (s *AnalyticsServiceServer) GetTopURLs(ctx context.Context, req *pb.GetTopURLsRequest) (*pb.GetTopURLsResponse, error) {
+	log.Printf("GetTopURLs: period=%s, limit=%d", req.Period, req.Limit)
+
+	var key string
+	now := time.Now()
+
+	switch req.Period {
+	case "all":
+		key = "clicks:global:sorted"
+	case "week":
+		key = fmt.Sprintf("clicks:global:week:%s", now.Format("2006-W01"))
+	case "month":
+		key = fmt.Sprintf("clicks:global:month:%s", now.Format("2006-01"))
+	default:
+		key = "clicks:global:sorted"
+	}
+
+	limit := req.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+
+	results, err := s.redis.ZRevRangeWithScores(ctx, key, 0, int64(limit-1)).Result()
+	if err != nil {
+		log.Printf("Failed to get top URLs: %v", err)
+		return &pb.GetTopURLsResponse{Urls: []*pb.TopURLItem{}}, nil
+	}
+
+	var urls []*pb.TopURLItem
+	for _, result := range results {
+		urls = append(urls, &pb.TopURLItem{
+			ShortCode: result.Member.(string),
+			Clicks:    int64(result.Score),
+		})
+	}
+
+	log.Printf("Found %d top URLs for period %s", len(urls), req.Period)
+
+	return &pb.GetTopURLsResponse{Urls: urls}, nil
+}
+
+func (s *AnalyticsServiceServer) GetTopReferers(ctx context.Context, req *pb.GetTopReferersRequest) (*pb.GetTopReferersResponse, error) {
+	log.Printf("GetTopReferers: short_code=%s, limit=%d", req.ShortCode, req.Limit)
+
+	refererKey := fmt.Sprintf("clicks:referers:%s", req.ShortCode)
+
+	limit := req.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+
+	results, err := s.redis.ZRevRangeWithScores(ctx, refererKey, 0, int64(limit-1)).Result()
+	if err != nil {
+		log.Printf("Failed to get top referers: %v", err)
+		return &pb.GetTopReferersResponse{Referers: []*pb.RefererItem{}}, nil
+	}
+
+	var referers []*pb.RefererItem
+	for _, result := range results {
+		referers = append(referers, &pb.RefererItem{
+			Referer: result.Member.(string),
+			Count:   int64(result.Score),
+		})
+	}
+
+	log.Printf("Found %d top referers for %s", len(referers), req.ShortCode)
+
+	return &pb.GetTopReferersResponse{Referers: referers}, nil
+}
+
+func (s *AnalyticsServiceServer) GetHourlyDistribution(ctx context.Context, req *pb.GetHourlyDistributionRequest) (*pb.GetHourlyDistributionResponse, error) {
+	log.Printf("GetHourlyDistribution: short_code=%s, date=%s", req.ShortCode, req.Date)
+
+	date := req.Date
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+
+	var hours []*pb.HourlyClick
+	for hour := 0; hour < 24; hour++ {
+		hourKey := fmt.Sprintf("clicks:hourly:%s:%s-%02d", req.ShortCode, date, hour)
+		count, err := s.redis.Get(ctx, hourKey).Int64()
+		if err != nil {
+			count = 0
+		}
+		hours = append(hours, &pb.HourlyClick{
+			Hour:  int32(hour),
+			Count: count,
+		})
+	}
+
+	log.Printf("Retrieved hourly distribution for %s on %s", req.ShortCode, date)
+
+	return &pb.GetHourlyDistributionResponse{Hours: hours}, nil
 }
 
 func main() {

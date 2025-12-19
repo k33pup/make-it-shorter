@@ -7,6 +7,9 @@ option go_package = "github.com/gorgio/network/api/proto";
 service AnalyticsService {
   rpc RecordClick(RecordClickRequest) returns (RecordClickResponse);
   rpc GetClickStats(GetClickStatsRequest) returns (GetClickStatsResponse);
+  rpc GetTopURLs(GetTopURLsRequest) returns (GetTopURLsResponse);
+  rpc GetTopReferers(GetTopReferersRequest) returns (GetTopReferersResponse);
+  rpc GetHourlyDistribution(GetHourlyDistributionRequest) returns (GetHourlyDistributionResponse);
 }
 
 message RecordClickRequest {
@@ -37,4 +40,46 @@ message DailyClick {
 
 message GetClickStatsResponse {
   ClickStats stats = 1;
+}
+
+message GetTopURLsRequest {
+  string period = 1;
+  int32 limit = 2;
+}
+
+message TopURLItem {
+  string short_code = 1;
+  int64 clicks = 2;
+}
+
+message GetTopURLsResponse {
+  repeated TopURLItem urls = 1;
+}
+
+message GetTopReferersRequest {
+  string short_code = 1;
+  int32 limit = 2;
+}
+
+message RefererItem {
+  string referer = 1;
+  int64 count = 2;
+}
+
+message GetTopReferersResponse {
+  repeated RefererItem referers = 1;
+}
+
+message GetHourlyDistributionRequest {
+  string short_code = 1;
+  string date = 2;
+}
+
+message HourlyClick {
+  int32 hour = 1;
+  int64 count = 2;
+}
+
+message GetHourlyDistributionResponse {
+  repeated HourlyClick hours = 1;
 }

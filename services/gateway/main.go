@@ -382,6 +382,111 @@ func (g *Gateway) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (g *Gateway) handleGetTopURLs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		period = "all"
+	}
+
+	limit := 100
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := g.analyticsClient.GetTopURLs(ctx, &pb.GetTopURLsRequest{
+		Period: period,
+		Limit:  int32(limit),
+	})
+
+	if err != nil {
+		log.Printf("Error getting top URLs: %v", err)
+		http.Error(w, "Failed to get top URLs", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (g *Gateway) handleGetTopReferers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	shortCode := r.URL.Query().Get("code")
+	if shortCode == "" {
+		http.Error(w, "Short code required", http.StatusBadRequest)
+		return
+	}
+
+	if err := validator.ValidateShortCode(shortCode); err != nil {
+		http.Error(w, "Invalid short code", http.StatusBadRequest)
+		return
+	}
+
+	limit := 100
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := g.analyticsClient.GetTopReferers(ctx, &pb.GetTopReferersRequest{
+		ShortCode: shortCode,
+		Limit:     int32(limit),
+	})
+
+	if err != nil {
+		log.Printf("Error getting top referers: %v", err)
+		http.Error(w, "Failed to get top referers", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (g *Gateway) handleGetHourlyDistribution(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	shortCode := r.URL.Query().Get("code")
+	if shortCode == "" {
+		http.Error(w, "Short code required", http.StatusBadRequest)
+		return
+	}
+
+	if err := validator.ValidateShortCode(shortCode); err != nil {
+		http.Error(w, "Invalid short code", http.StatusBadRequest)
+		return
+	}
+
+	date := r.URL.Query().Get("date")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := g.analyticsClient.GetHourlyDistribution(ctx, &pb.GetHourlyDistributionRequest{
+		ShortCode: shortCode,
+		Date:      date,
+	})
+
+	if err != nil {
+		log.Printf("Error getting hourly distribution: %v", err)
+		http.Error(w, "Failed to get hourly distribution", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func getClientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		if idx := strings.Index(xff, ","); idx != -1 {
@@ -446,6 +551,9 @@ func main() {
 	mux.HandleFunc("/api/shorten", gateway.handleCreateShortURL)
 	mux.HandleFunc("/api/urls", gateway.handleGetUserURLs)
 	mux.HandleFunc("/api/stats", gateway.handleGetStats)
+	mux.HandleFunc("/api/analytics/top", gateway.handleGetTopURLs)
+	mux.HandleFunc("/api/analytics/referers", gateway.handleGetTopReferers)
+	mux.HandleFunc("/api/analytics/hourly", gateway.handleGetHourlyDistribution)
 
 	mux.HandleFunc("/s/", gateway.handleRedirect)
 
