@@ -115,11 +115,74 @@ func ValidateShortCode(code string) error {
 }
 
 func SanitizeInput(input string) string {
-	// Remove potential XSS characters
-	input = strings.ReplaceAll(input, "<", "")
-	input = strings.ReplaceAll(input, ">", "")
-	input = strings.ReplaceAll(input, "\"", "")
-	input = strings.ReplaceAll(input, "'", "")
 	input = strings.TrimSpace(input)
-	return input
+
+	result := strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, input)
+
+	replacements := map[string]string{
+		"<":  "",
+		">":  "",
+		"\"": "",
+		"'":  "",
+		";":  "",
+		"&":  "",
+		"|":  "",
+		"`":  "",
+		"$":  "",
+		"\n": "",
+		"\r": "",
+		"\t": "",
+	}
+
+	for old, new := range replacements {
+		result = strings.ReplaceAll(result, old, new)
+	}
+
+	return result
+}
+
+func ValidateAlphanumeric(input string, maxLength int) error {
+	if len(input) > maxLength {
+		return fmt.Errorf("input exceeds maximum length of %d", maxLength)
+	}
+
+	matched := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`).MatchString(input)
+	if !matched {
+		return fmt.Errorf("input contains invalid characters")
+	}
+
+	return nil
+}
+
+func SanitizeRedisKey(key string) string {
+	var result strings.Builder
+	for _, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+		   (r >= '0' && r <= '9') || r == '-' || r == '_' || r == ':' {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+func ValidateEmail(email string) error {
+	if email == "" {
+		return nil
+	}
+
+	if len(email) > 254 {
+		return fmt.Errorf("email too long")
+	}
+
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	if !emailRegex.MatchString(email) {
+		return fmt.Errorf("invalid email format")
+	}
+
+	return nil
 }

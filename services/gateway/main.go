@@ -49,6 +49,15 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+func requestSizeLimit(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // CORS middleware
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +142,7 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -140,29 +150,35 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize input
 	username := validator.SanitizeInput(req.Username)
 	password := validator.SanitizeInput(req.Password)
+	email := validator.SanitizeInput(req.Email)
 
-	// Validate inputs
 	if username == "" || password == "" {
 		http.Error(w, "Username and password are required", http.StatusBadRequest)
 		return
 	}
 
-	// Check username length
-	if len(username) < 3 || len(username) > 50 {
-		http.Error(w, "Username must be between 3 and 50 characters", http.StatusBadRequest)
+	if err := validator.ValidateAlphanumeric(username, 50); err != nil {
+		http.Error(w, "Invalid username format", http.StatusBadRequest)
 		return
 	}
 
-	// Check password length
+	if len(username) < 3 {
+		http.Error(w, "Username must be at least 3 characters", http.StatusBadRequest)
+		return
+	}
+
 	if len(password) < 6 {
 		http.Error(w, "Password must be at least 6 characters", http.StatusBadRequest)
 		return
 	}
 
-	// Check if user already exists
+	if err := validator.ValidateEmail(email); err != nil {
+		http.Error(w, "Invalid email format", http.StatusBadRequest)
+		return
+	}
+
 	exists, err := g.userDB.UserExists(username)
 	if err != nil {
 		log.Printf("Error checking user existence: %v", err)
@@ -175,15 +191,13 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create user (email is empty string)
-	err = g.userDB.CreateUser(username, password, "")
+	err = g.userDB.CreateUser(username, password, email)
 	if err != nil {
 		log.Printf("Error creating user: %v", err)
 		http.Error(w, "Failed to create user", http.StatusInternalServerError)
 		return
 	}
 
-	// Generate JWT token for auto-login
 	token, err := auth.GenerateToken(username)
 	if err != nil {
 		http.Error(w, "User created but failed to generate token", http.StatusInternalServerError)
@@ -259,7 +273,11 @@ func (g *Gateway) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get original URL from URL service
+	if err := validator.ValidateShortCode(shortCode); err != nil {
+		http.Error(w, "Invalid short code", http.StatusBadRequest)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -349,6 +367,11 @@ func (g *Gateway) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	shortCode := r.URL.Query().Get("code")
 	if shortCode == "" {
 		http.Error(w, "Short code required", http.StatusBadRequest)
+		return
+	}
+
+	if err := validator.ValidateShortCode(shortCode); err != nil {
+		http.Error(w, "Invalid short code", http.StatusBadRequest)
 		return
 	}
 
@@ -453,8 +476,7 @@ func main() {
 	fs := http.FileServer(http.Dir("/app/web/static"))
 	mux.Handle("/", fs)
 
-	// Apply middleware
-	handler := corsMiddleware(securityHeaders(rateLimiter.Middleware(mux)))
+	handler := corsMiddleware(securityHeaders(requestSizeLimit(1024*1024)(rateLimiter.Middleware(mux))))
 
 	log.Println("API Gateway started on :8080")
 	if err := http.ListenAndServe(":8080", handler); err != nil {

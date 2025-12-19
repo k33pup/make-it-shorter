@@ -38,23 +38,26 @@ func NewAnalyticsServiceServer(redisClient *redis.Client) *AnalyticsServiceServe
 func (s *AnalyticsServiceServer) RecordClick(ctx context.Context, req *pb.RecordClickRequest) (*pb.RecordClickResponse, error) {
 	log.Printf("RecordClick: short_code=%s, ip=%s", req.ShortCode, req.IpAddress)
 
+	shortCode := req.ShortCode
+	ipAddress := req.IpAddress[:min(len(req.IpAddress), 45)]
+	userAgent := req.UserAgent[:min(len(req.UserAgent), 500)]
+	referer := req.Referer[:min(len(req.Referer), 500)]
+
 	clickData := &ClickData{
-		ShortCode: req.ShortCode,
-		IPAddress: req.IpAddress,
-		UserAgent: req.UserAgent,
-		Referer:   req.Referer,
+		ShortCode: shortCode,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+		Referer:   referer,
 		Timestamp: time.Now().Unix(),
 	}
 
-	// Store in memory
 	s.mu.Lock()
-	s.clicks[req.ShortCode] = append(s.clicks[req.ShortCode], clickData)
+	s.clicks[shortCode] = append(s.clicks[shortCode], clickData)
 	s.mu.Unlock()
 
-	// Increment Redis counter
-	totalKey := fmt.Sprintf("clicks:total:%s", req.ShortCode)
-	uniqueKey := fmt.Sprintf("clicks:unique:%s", req.ShortCode)
-	dateKey := fmt.Sprintf("clicks:daily:%s:%s", req.ShortCode, time.Now().Format("2006-01-02"))
+	totalKey := fmt.Sprintf("clicks:total:%s", shortCode)
+	uniqueKey := fmt.Sprintf("clicks:unique:%s", shortCode)
+	dateKey := fmt.Sprintf("clicks:daily:%s:%s", shortCode, time.Now().Format("2006-01-02"))
 
 	pipe := s.redis.Pipeline()
 	pipe.Incr(ctx, totalKey)
@@ -84,14 +87,19 @@ func (s *AnalyticsServiceServer) GetClickStats(ctx context.Context, req *pb.GetC
 
 	// Get total clicks
 	totalClicks, err := s.redis.Get(ctx, totalKey).Int64()
-	if err != nil && err != redis.Nil {
-		log.Printf("Failed to get total clicks: %v", err)
+	if err != nil {
+		if err.Error() != "redis: nil" {
+			log.Printf("Failed to get total clicks: %v", err)
+		}
+		totalClicks = 0
 	}
 
-	// Get unique clicks
 	uniqueClicks, err := s.redis.SCard(ctx, uniqueKey).Result()
-	if err != nil && err != redis.Nil {
-		log.Printf("Failed to get unique clicks: %v", err)
+	if err != nil {
+		if err.Error() != "redis: nil" {
+			log.Printf("Failed to get unique clicks: %v", err)
+		}
+		uniqueClicks = 0
 	}
 
 	// Get daily clicks for last 7 days
@@ -100,7 +108,7 @@ func (s *AnalyticsServiceServer) GetClickStats(ctx context.Context, req *pb.GetC
 		date := time.Now().AddDate(0, 0, -i).Format("2006-01-02")
 		dateKey := fmt.Sprintf("clicks:daily:%s:%s", req.ShortCode, date)
 		count, err := s.redis.Get(ctx, dateKey).Int64()
-		if err != nil && err != redis.Nil {
+		if err != nil {
 			count = 0
 		}
 		dailyClicks = append(dailyClicks, &pb.DailyClick{

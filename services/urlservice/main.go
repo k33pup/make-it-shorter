@@ -84,20 +84,22 @@ func (s *URLServiceServer) CreateShortURL(ctx context.Context, req *pb.CreateSho
 	log.Printf("CreateShortURL request: original_url=%s, user_id=%s, custom_alias=%s",
 		req.OriginalUrl, req.UserId, req.CustomAlias)
 
-	// Validate URL
 	if err := validator.ValidateURL(req.OriginalUrl); err != nil {
 		return nil, fmt.Errorf("invalid URL: %w", err)
 	}
 
+	userID := validator.SanitizeInput(req.UserId)
+	if userID == "" {
+		return nil, fmt.Errorf("user ID is required")
+	}
+
 	var shortCode string
 	if req.CustomAlias != "" {
-		// Use custom alias if provided
 		if err := validator.ValidateShortCode(req.CustomAlias); err != nil {
 			return nil, fmt.Errorf("invalid custom alias: %w", err)
 		}
 		shortCode = req.CustomAlias
 
-		// Check if alias already exists
 		s.mu.RLock()
 		_, exists := s.storage[shortCode]
 		s.mu.RUnlock()
@@ -105,7 +107,6 @@ func (s *URLServiceServer) CreateShortURL(ctx context.Context, req *pb.CreateSho
 			return nil, fmt.Errorf("alias already exists")
 		}
 	} else {
-		// Generate random short code
 		shortCode = generateShortCode()
 	}
 
@@ -113,29 +114,26 @@ func (s *URLServiceServer) CreateShortURL(ctx context.Context, req *pb.CreateSho
 	urlData := &URLData{
 		ShortCode:   shortCode,
 		OriginalURL: req.OriginalUrl,
-		UserID:      req.UserId,
+		UserID:      userID,
 		CreatedAt:   createdAt,
 	}
 
-	// Store in memory
 	s.mu.Lock()
 	s.storage[shortCode] = urlData
 	s.mu.Unlock()
 
-	// 1. Persist full data in Redis (Permanent storage)
 	jsonData, err := json.Marshal(urlData)
 	if err != nil {
 		log.Printf("Failed to marshal URL data: %v", err)
 	} else {
-		persistKey := fmt.Sprintf("urldata:%s", shortCode)
-		err := s.redis.Set(ctx, persistKey, jsonData, 0).Err() // 0 = no expiration
+		persistKey := validator.SanitizeRedisKey(fmt.Sprintf("urldata:%s", shortCode))
+		err := s.redis.Set(ctx, persistKey, jsonData, 0).Err()
 		if err != nil {
 			log.Printf("Failed to persist in Redis: %v", err)
 		}
 	}
 
-	// 2. Cache simple mapping in Redis (Fast lookups, 24h TTL)
-	cacheKey := fmt.Sprintf("url:%s", shortCode)
+	cacheKey := validator.SanitizeRedisKey(fmt.Sprintf("url:%s", shortCode))
 	err = s.redis.Set(ctx, cacheKey, req.OriginalUrl, 24*time.Hour).Err()
 	if err != nil {
 		log.Printf("Failed to cache in Redis: %v", err)
@@ -154,8 +152,11 @@ func (s *URLServiceServer) CreateShortURL(ctx context.Context, req *pb.CreateSho
 func (s *URLServiceServer) GetOriginalURL(ctx context.Context, req *pb.GetOriginalURLRequest) (*pb.GetOriginalURLResponse, error) {
 	log.Printf("GetOriginalURL request: short_code=%s", req.ShortCode)
 
-	// Try Redis cache first
-	cacheKey := fmt.Sprintf("url:%s", req.ShortCode)
+	if err := validator.ValidateShortCode(req.ShortCode); err != nil {
+		return &pb.GetOriginalURLResponse{Found: false}, nil
+	}
+
+	cacheKey := validator.SanitizeRedisKey(fmt.Sprintf("url:%s", req.ShortCode))
 	cachedURL, err := s.redis.Get(ctx, cacheKey).Result()
 	if err == nil {
 		log.Printf("Cache hit for %s: %s", req.ShortCode, cachedURL)
@@ -165,7 +166,6 @@ func (s *URLServiceServer) GetOriginalURL(ctx context.Context, req *pb.GetOrigin
 		}, nil
 	}
 
-	// Check in-memory storage
 	s.mu.RLock()
 	urlData, exists := s.storage[req.ShortCode]
 	s.mu.RUnlock()
@@ -177,7 +177,6 @@ func (s *URLServiceServer) GetOriginalURL(ctx context.Context, req *pb.GetOrigin
 		}, nil
 	}
 
-	// Update Redis cache
 	s.redis.Set(ctx, cacheKey, urlData.OriginalURL, 24*time.Hour)
 
 	log.Printf("Found URL: %s -> %s", req.ShortCode, urlData.OriginalURL)
