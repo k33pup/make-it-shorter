@@ -1,8 +1,99 @@
 let authToken = localStorage.getItem('authToken');
 let currentUser = localStorage.getItem('currentUser');
 
-// Initialize app
+const translations = {
+    en: {
+        title: "URL Shortener",
+        subtitle: "Distributed Microservices Architecture",
+        login: "Login",
+        register: "Register",
+        logout: "Logout",
+        username_placeholder: "Enter username",
+        password_placeholder: "Enter password",
+        confirm_password_placeholder: "Confirm password",
+        no_account: "Don't have an account?",
+        have_account: "Already have an account?",
+        logged_in_as: "Logged in as:",
+        create_short_url: "Create Short URL",
+        url_placeholder: "Enter long URL (https://example.com)",
+        custom_alias_placeholder: "Custom alias (optional)",
+        shorten_btn: "Shorten URL",
+        success: "Success!",
+        copy_btn: "Copy",
+        your_urls: "Your URLs",
+        refresh_btn: "Refresh",
+        stats_btn: "Stats",
+        created: "Created:",
+        clicks: "Clicks:",
+        unique: "unique",
+        no_urls_message: "No URLs yet. Create your first short URL!"
+    },
+    ru: {
+        title: "Сокращатель URL",
+        subtitle: "Распределённая микросервисная архитектура",
+        login: "Войти",
+        register: "Регистрация",
+        logout: "Выйти",
+        username_placeholder: "Введите имя пользователя",
+        password_placeholder: "Введите пароль",
+        confirm_password_placeholder: "Подтвердите пароль",
+        no_account: "Нет аккаунта?",
+        have_account: "Уже есть аккаунт?",
+        logged_in_as: "Вы вошли как:",
+        create_short_url: "Создать короткую ссылку",
+        url_placeholder: "Введите длинный URL (https://example.com)",
+        custom_alias_placeholder: "Пользовательский алиас (необязательно)",
+        shorten_btn: "Сократить URL",
+        success: "Успешно!",
+        copy_btn: "Копировать",
+        your_urls: "Ваши ссылки",
+        refresh_btn: "Обновить",
+        stats_btn: "Статистика",
+        created: "Создано:",
+        clicks: "Клики:",
+        unique: "уникальных",
+        no_urls_message: "Пока нет ссылок. Создайте свою первую короткую ссылку!"
+    }
+};
+
+let currentLang = localStorage.getItem('language') || 'en';
+
+function setLanguage(lang) {
+    currentLang = lang;
+    localStorage.setItem('language', lang);
+
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (translations[lang][key]) {
+            el.textContent = translations[lang][key];
+        }
+    });
+
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        const key = el.getAttribute('data-i18n-placeholder');
+        if (translations[lang][key]) {
+            el.placeholder = translations[lang][key];
+        }
+    });
+
+    document.querySelectorAll('.lang-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-lang') === lang);
+    });
+
+    if (document.getElementById('urlList').children.length > 0) {
+        loadUserUrls();
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    setLanguage(currentLang);
+
+    document.querySelectorAll('.lang-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            setLanguage(btn.getAttribute('data-lang'));
+        });
+    });
+
     if (authToken && currentUser) {
         showMainSection();
         loadUserUrls();
@@ -21,13 +112,13 @@ function showToast(message) {
 function showRegisterForm() {
     document.getElementById('loginForm').classList.add('hidden');
     document.getElementById('registerForm').classList.remove('hidden');
-    document.getElementById('authTitle').textContent = 'Register';
+    document.getElementById('authTitle').textContent = translations[currentLang].register;
 }
 
 function showLoginForm() {
     document.getElementById('registerForm').classList.add('hidden');
     document.getElementById('loginForm').classList.remove('hidden');
-    document.getElementById('authTitle').textContent = 'Login';
+    document.getElementById('authTitle').textContent = translations[currentLang].login;
 }
 
 async function register() {
@@ -223,7 +314,7 @@ function displayUrls(urls) {
     const urlList = document.getElementById('urlList');
 
     if (urls.length === 0) {
-        urlList.innerHTML = '<p class="no-urls-message">No URLs yet. Create your first short URL!</p>';
+        urlList.innerHTML = `<p class="no-urls-message">${translations[currentLang].no_urls_message}</p>`;
         return;
     }
 
@@ -231,17 +322,16 @@ function displayUrls(urls) {
         <div class="url-item">
             <div class="url-item-header">
                 <a href="${url.short_url}" class="url-short" target="_blank">${url.short_url}</a>
-                <button class="btn-secondary stats-btn" data-shortcode="${url.short_code}">Stats</button>
+                <button class="btn-secondary stats-btn" data-shortcode="${url.short_code}">${translations[currentLang].stats_btn}</button>
             </div>
             <div class="url-original">${url.original_url}</div>
             <div class="url-stats">
-                Created: ${new Date(url.created_at * 1000).toLocaleString()}
+                ${translations[currentLang].created} ${new Date(url.created_at * 1000).toLocaleString()}
                 <span id="stats-${url.short_code}"></span>
             </div>
         </div>
     `).join('');
 
-    // Add event listeners to all stats buttons
     document.querySelectorAll('.stats-btn').forEach(btn => {
         btn.addEventListener('click', function() {
             loadStats(this.dataset.shortcode);
@@ -263,7 +353,7 @@ async function loadStats(shortCode) {
         const statsElement = document.getElementById(`stats-${shortCode}`);
 
         if (statsElement) {
-            statsElement.innerHTML = ` | Clicks: ${data.stats.total_clicks} (${data.stats.unique_clicks} unique)`;
+            statsElement.innerHTML = ` | ${translations[currentLang].clicks} ${data.stats.total_clicks} (${data.stats.unique_clicks} ${translations[currentLang].unique})`;
         }
 
         showToast(`Stats loaded: ${data.stats.total_clicks} total clicks`);
