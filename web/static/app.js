@@ -85,21 +85,6 @@ function setLanguage(lang) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    setLanguage(currentLang);
-
-    document.querySelectorAll('.lang-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            setLanguage(btn.getAttribute('data-lang'));
-        });
-    });
-
-    if (authToken && currentUser) {
-        showMainSection();
-        loadUserUrls();
-    }
-});
-
 function showToast(message) {
     const toast = document.getElementById('toast');
     toast.textContent = message;
@@ -382,6 +367,22 @@ function copyToClipboard() {
 
 // Setup event listeners
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize language
+    setLanguage(currentLang);
+
+    // Language switcher buttons
+    document.querySelectorAll('.lang-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            setLanguage(btn.getAttribute('data-lang'));
+        });
+    });
+
+    // Check authentication state
+    if (authToken && currentUser) {
+        showMainSection();
+        loadUserUrls();
+    }
+
     // Login button
     const loginBtn = document.getElementById('loginBtn');
     if (loginBtn) {
