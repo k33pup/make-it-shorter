@@ -27,6 +27,10 @@ go.work.sum
 # env file
 .env
 
+# SSL certificates (for development)
+nginx/ssl/*.crt
+nginx/ssl/*.key
+
 # Editor/IDE
 # .idea/
 # .vscode/
